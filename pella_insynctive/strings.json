@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Pella Insynctive V2 Bridge (Telnet)",
+        "description": "Enter the local IP and Telnet port (default 23).",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        }
+      }
+    }
+  }
+}
