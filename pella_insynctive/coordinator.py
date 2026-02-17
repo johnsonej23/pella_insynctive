@@ -97,7 +97,9 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
     def point_device_info(self, idx: int) -> dict:
         dev = self.data.get(idx)
-        point_key = dev.point_id if dev and dev.point_id else f"point_{idx:03d}"
+        # IMPORTANT: use the bridge point index as the stable identifier
+        point_key = f"point_{idx:03d}"
+
         return {
             "identifiers": {(DOMAIN, f"{self.bridge_id}_{point_key}")},
             "name": self._device_name_override(dev, idx),
