@@ -19,11 +19,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     @callback
     def _on_update() -> None:
-        existing = {e._idx for e in hass.data.setdefault(f"{DOMAIN}_shade_{entry.entry_id}", [])}
+        existing = {e.unique_id for e in hass.data.setdefault(f"{DOMAIN}_shade_{entry.entry_id}", [])}
         new = []
         for idx, d in coord.data.items():
-            if d.device_type == DEVICE_SHADE and idx not in existing:
-                new.append(PellaShade(coord, entry.entry_id, idx))
+            if d.device_type == DEVICE_SHADE:
+                ent = PellaShade(coord, entry.entry_id, idx)
+                if ent.unique_id not in existing:
+                    new.append(ent)
         if new:
             async_add_entities(new, update_before_add=False)
 
@@ -50,9 +52,7 @@ class PellaShade(CoverEntity):
 
     @property
     def unique_id(self) -> str:
-        dev = self.coordinator.data.get(self._idx)
-        base = dev.point_id if dev and dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_shade_{base}"
+        return self.coordinator.point_unique_id(self._idx, "shade")
 
     @property
     def name(self) -> str:
