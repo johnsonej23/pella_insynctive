@@ -66,8 +66,7 @@ class PellaBatterySensor(_BaseSensor):
 
     @property
     def unique_id(self) -> str:
-        base = self._dev.point_id if self._dev and self._dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_battery_{base}"
+        return self.coordinator.point_unique_id(self._idx, "battery")
 
     @property
     def name(self) -> str:
@@ -94,8 +93,7 @@ class PellaBridgeIndexSensor(_BaseSensor):
 
     @property
     def unique_id(self) -> str:
-        base = self._dev.point_id if self._dev and self._dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_bridge_index_{base}"
+        return self.coordinator.point_unique_id(self._idx, "bridge_index")
 
     @property
     def name(self) -> str:
@@ -108,14 +106,12 @@ class PellaBridgeIndexSensor(_BaseSensor):
         return int(self._idx)
 
 
-
 class PellaRawStatusSensor(_BaseSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def unique_id(self) -> str:
-        base = self._dev.point_id if self._dev and self._dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_rawstatus_{base}"
+        return self.coordinator.point_unique_id(self._idx, "rawstatus")
 
     @property
     def name(self) -> str:

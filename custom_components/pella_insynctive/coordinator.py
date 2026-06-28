@@ -89,16 +89,29 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
     @property
     def bridge_id(self) -> str:
-        return f"bridge_{self._host}_{self._port}"
+        """Return a stable bridge identifier.
+
+        Do not include the bridge IP address here. If the bridge IP changes,
+        Home Assistant should continue treating it as the same bridge device.
+        """
+        return f"bridge_{self.entry.entry_id}"
 
     @property
     def bridge_name(self) -> str:
         return f"Pella Insynctive ({self._host})"
 
+    @staticmethod
+    def point_key(idx: int) -> str:
+        """Return a stable point key based only on the bridge point index."""
+        return f"point_{idx:03d}"
+
+    def point_unique_id(self, idx: int, suffix: str) -> str:
+        """Return a stable unique ID for an entity on a bridge point."""
+        return f"{self.entry.entry_id}_{self.point_key(idx)}_{suffix}"
+
     def point_device_info(self, idx: int) -> dict:
         dev = self.data.get(idx)
-        # IMPORTANT: use the bridge point index as the stable identifier
-        point_key = f"point_{idx:03d}"
+        point_key = self.point_key(idx)
 
         return {
             "identifiers": {(DOMAIN, f"{self.bridge_id}_{point_key}")},
@@ -107,7 +120,6 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             "model": self._device_model(dev),
             "via_device": (DOMAIN, self.bridge_id),
         }
-
 
     def _device_name_override(self, dev: DeviceInfo | None, idx: int) -> str:
         key = f"device_name_{idx:03d}"
@@ -126,7 +138,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
     def _apply_device_overrides_to_registry(self) -> None:
         dev_reg = dr.async_get(self.hass)
         for idx, dev in self.data.items():
-            point_key = dev.point_id if dev.point_id else f"point_{idx:03d}"
+            point_key = self.point_key(idx)
             identifiers = {(DOMAIN, f"{self.bridge_id}_{point_key}")}
             ha_dev = dev_reg.async_get_device(identifiers=identifiers)
             if not ha_dev:
@@ -143,7 +155,6 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
             if updates:
                 dev_reg.async_update_device(ha_dev.id, **updates)
-
 
     def _device_model(self, dev: DeviceInfo | None) -> str:
         # Prefer deriving model from the first two digits of POINTID (serial),
@@ -170,7 +181,6 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                 return "Shade/Blind"
 
         return "Insynctive Device"
-
 
     @property
     def shade_invert(self) -> bool:
@@ -274,8 +284,16 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                 name = self._default_name(device_type, i, point_id)
 
                 self.data[i] = DeviceInfo(i, point_id, device_type, name, status_hex, battery_hex)
-                _LOGGER.debug("Discovered point %s: type_raw=%s type=%s id_raw=%s id=%s status_raw=%s status=%s",
-                              idx, dtype_raw, device_type, pid_raw, point_id, status_raw, status_hex)
+                _LOGGER.debug(
+                    "Discovered point %s: type_raw=%s type=%s id_raw=%s id=%s status_raw=%s status=%s",
+                    idx,
+                    dtype_raw,
+                    device_type,
+                    pid_raw,
+                    point_id,
+                    status_raw,
+                    status_hex,
+                )
             except TimeoutError:
                 _LOGGER.debug("Timeout querying point %s; skipping", idx)
                 continue
@@ -320,7 +338,6 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             except TimeoutError:
                 _LOGGER.debug("Timeout polling battery for point %s", idx)
         self.async_set_updated_data(self.data)
-
 
     async def async_refresh_point_status(self, idx: int) -> None:
         """Refresh a single point's status from the bridge."""
