@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -39,19 +39,44 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coord: PellaCoordinator = hass.data[DOMAIN][entry.entry_id]
+    storage_key = f"{DOMAIN}_button_{entry.entry_id}"
+    hass.data.setdefault(storage_key, [])
 
-    entities: list[ButtonEntity] = []
-    for idx in coord.data.keys():
-        for desc in DESCRIPTIONS:
-            entities.append(PellaPointButton(coord, entry.entry_id, idx, desc))
+    def _make_new_buttons() -> list[ButtonEntity]:
+        existing = {entity.unique_id for entity in hass.data[storage_key]}
+        new_entities: list[ButtonEntity] = []
 
-    async_add_entities(entities)
+        for idx in coord.data:
+            for desc in DESCRIPTIONS:
+                entity = PellaPointButton(coord, entry.entry_id, idx, desc)
+                if entity.unique_id not in existing:
+                    new_entities.append(entity)
+                    hass.data[storage_key].append(entity)
+                    existing.add(entity.unique_id)
+
+        return new_entities
+
+    async_add_entities(_make_new_buttons())
+
+    @callback
+    def _on_update() -> None:
+        new_entities = _make_new_buttons()
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coord.async_add_listener(_on_update))
 
 
 class PellaPointButton(ButtonEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: PellaCoordinator, entry_id: str, idx: int, description: PellaButtonEntityDescription) -> None:
+    def __init__(
+        self,
+        coordinator: PellaCoordinator,
+        entry_id: str,
+        idx: int,
+        description: PellaButtonEntityDescription,
+    ) -> None:
         self.coordinator = coordinator
         self._entry_id = entry_id
         self._idx = idx
@@ -66,7 +91,7 @@ class PellaPointButton(ButtonEntity):
 
     @property
     def device_info(self):
-        # Attach to the point device (not the bridge)
+        # Attach to the point device, not the bridge.
         return self.coordinator.point_device_info(self._idx)
 
     @property
