@@ -455,6 +455,13 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             return
 
         if self._pending and not self._pending.done():
+            if self._last_cmd and self._last_cmd.startswith("?POINTSTATUS-") and line.strip().startswith("$"):
+                _LOGGER.debug(
+                    "Ignoring dollar-prefixed response while waiting for %s: %r",
+                    self._last_cmd,
+                    line,
+                )
+                return
             self._pending.set_result(line)
 
     @staticmethod
