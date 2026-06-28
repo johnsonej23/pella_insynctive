@@ -35,9 +35,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-RE_UNSOL = re.compile(r"^POINTSTATUS-(?P<idx>\d{3}),(?:\$)?(?P<val>[0-9A-Fa-f]{2})$")
+RE_POINTSTATUS = re.compile(r"^POINTSTATUS-(?P<idx>\d{3}),(?P<dollar>\$?)(?P<val>[0-9A-Fa-f]{2})$")
 RE_HEX_DOLLAR = re.compile(r"\$([0-9A-Fa-f]{2})")
 RE_AFTER_COMMA = re.compile(r",\s*(.+)$")
+RE_POINT_BATTERY_CMD = re.compile(r"^\?POINTBATTERYGET-(?P<idx>\d{3})$")
+RE_POINT_STATUS_CMD = re.compile(r"^\?POINTSTATUS-(?P<idx>\d{3})$")
 
 
 @dataclass
@@ -76,6 +78,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
         self._cmd_lock = asyncio.Lock()
         self._pending: asyncio.Future[str] | None = None
         self._last_cmd: str | None = None
+        self._pending_battery_index: int | None = None
 
         self._poll_unsub = None
         self._battery_unsub = None
@@ -245,6 +248,14 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             self._battery_unsub = None
         await self._client.stop()
 
+    async def _query_battery(self, idx: int, timeout: float = 5.0) -> str:
+        """Query battery with context for POINTSTATUS-###,$XX bridge responses."""
+        self._pending_battery_index = idx
+        try:
+            return await self._query(f"?POINTBATTERYGET-{idx:03d}", timeout=timeout)
+        finally:
+            self._pending_battery_index = None
+
     async def _startup_discovery(self) -> None:
         await asyncio.sleep(2)
         if not self._client.is_connected:
@@ -269,32 +280,28 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                 pid_raw = await self._query(f"?POINTID-{idx}", timeout=5.0)
                 status_raw = await self._query(f"?POINTSTATUS-{idx}", timeout=5.0)
 
-                # Battery is not included in POINTSTATUS; fetch once during discovery so the sensor
-                # doesn't sit at Unknown for hours until the first battery poll interval.
-                battery_raw = None
-                try:
-                    battery_raw = await self._query(f"?POINTBATTERYGET-{idx}", timeout=5.0)
-                    _LOGGER.debug("Battery discovery response for point %s: raw=%r", idx, battery_raw)
-                except TimeoutError:
-                    _LOGGER.debug("Timeout querying battery for point %s during discovery", idx)
-
                 device_type = self._parse_device_type(dtype_raw)
                 point_id = self._parse_point_id(pid_raw)
                 status_hex = self._parse_status_hex(status_raw)
 
-                battery_hex = None
-                if battery_raw:
-                    m = RE_HEX_DOLLAR.search(battery_raw)
-                    if m:
-                        battery_hex = f"${m.group(1).upper()}"
-                    else:
-                        _LOGGER.debug(
-                            "Unable to parse discovery battery response for point %s: raw=%r device_type=%s point_id=%s",
-                            idx,
-                            battery_raw,
-                            device_type,
-                            point_id,
-                        )
+                # Battery is not included in POINTSTATUS; fetch once during discovery so the sensor
+                # doesn't sit at Unknown for hours until the first battery poll interval.
+                battery_raw = None
+                try:
+                    battery_raw = await self._query_battery(i, timeout=5.0)
+                    _LOGGER.debug("Battery discovery response for point %s: raw=%r", idx, battery_raw)
+                except TimeoutError:
+                    _LOGGER.debug("Timeout querying battery for point %s during discovery", idx)
+
+                battery_hex = self._parse_battery_hex(battery_raw)
+                if battery_raw and battery_hex is None:
+                    _LOGGER.debug(
+                        "Unable to parse discovery battery response for point %s: raw=%r device_type=%s point_id=%s",
+                        idx,
+                        battery_raw,
+                        device_type,
+                        point_id,
+                    )
 
                 # If we can't parse a device type, still create the device so HA shows it,
                 # and logs will tell us what came back.
@@ -302,7 +309,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
                 self.data[i] = DeviceInfo(i, point_id, device_type, name, status_hex, battery_hex)
                 _LOGGER.debug(
-                    "Discovered point %s: type_raw=%s type=%s id_raw=%s id=%s status_raw=%s status=%s",
+                    "Discovered point %s: type_raw=%s type=%s id_raw=%s id=%s status_raw=%s status=%s battery_raw=%s battery=%s",
                     idx,
                     dtype_raw,
                     device_type,
@@ -310,6 +317,8 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                     point_id,
                     status_raw,
                     status_hex,
+                    battery_raw,
+                    battery_hex,
                 )
             except TimeoutError:
                 _LOGGER.debug("Timeout querying point %s; skipping", idx)
@@ -341,7 +350,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
         for i, dev in list(self.data.items()):
             idx = f"{i:03d}"
             try:
-                resp = await self._query(f"?POINTBATTERYGET-{idx}", timeout=5.0)
+                resp = await self._query_battery(i, timeout=5.0)
                 _LOGGER.debug(
                     "Battery poll response for point %s: raw=%r device_type=%s point_id=%s",
                     idx,
@@ -349,24 +358,17 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                     dev.device_type,
                     dev.point_id,
                 )
-                # Battery responses tend to be $xx but may come as POINTBATTERYGET-XXX,$xx
-                m = RE_HEX_DOLLAR.search(resp)
-                if m:
-                    dev.battery_hex = f"${m.group(1).upper()}"
+                battery_hex = self._parse_battery_hex(resp)
+                if battery_hex is not None:
+                    dev.battery_hex = battery_hex
                 else:
-                    tail = self._after_comma(resp).strip()
-                    if tail.startswith("$") and len(tail) == 3:
-                        tail = tail[1:]
-                    if len(tail) == 2 and all(c in "0123456789abcdefABCDEF" for c in tail):
-                        dev.battery_hex = f"${tail.upper()}"
-                    else:
-                        _LOGGER.debug(
-                            "Unable to parse battery poll response for point %s: raw=%r device_type=%s point_id=%s",
-                            idx,
-                            resp,
-                            dev.device_type,
-                            dev.point_id,
-                        )
+                    _LOGGER.debug(
+                        "Unable to parse battery poll response for point %s: raw=%r device_type=%s point_id=%s",
+                        idx,
+                        resp,
+                        dev.device_type,
+                        dev.point_id,
+                    )
             except TimeoutError:
                 _LOGGER.debug("Timeout polling battery for point %s", idx)
         self.async_set_updated_data(self.data)
@@ -381,8 +383,8 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
     async def async_refresh_point_battery(self, idx: int) -> None:
         """Refresh a single point's battery from the bridge."""
-        resp = await self._query(f"?POINTBATTERYGET-{idx:03d}", timeout=5.0)
         dev = self.data.get(idx)
+        resp = await self._query_battery(idx, timeout=5.0)
         _LOGGER.debug(
             "Battery manual refresh response for point %03d: raw=%r device_type=%s point_id=%s",
             idx,
@@ -390,24 +392,15 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             dev.device_type if dev else None,
             dev.point_id if dev else None,
         )
-        m = RE_HEX_DOLLAR.search(resp)
-        if not m:
-            tail = self._after_comma(resp).strip()
-            if tail.startswith("$") and len(tail) == 3:
-                tail = tail[1:]
-            if len(tail) == 2 and all(c in "0123456789abcdefABCDEF" for c in tail):
-                battery_hex = f"${tail.upper()}"
-            else:
-                battery_hex = None
-                _LOGGER.debug(
-                    "Unable to parse manual battery refresh response for point %03d: raw=%r device_type=%s point_id=%s",
-                    idx,
-                    resp,
-                    dev.device_type if dev else None,
-                    dev.point_id if dev else None,
-                )
-        else:
-            battery_hex = f"${m.group(1).upper()}"
+        battery_hex = self._parse_battery_hex(resp)
+        if battery_hex is None:
+            _LOGGER.debug(
+                "Unable to parse manual battery refresh response for point %03d: raw=%r device_type=%s point_id=%s",
+                idx,
+                resp,
+                dev.device_type if dev else None,
+                dev.point_id if dev else None,
+            )
 
         if battery_hex is not None and idx in self.data:
             self.data[idx].battery_hex = battery_hex
@@ -436,18 +429,60 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                 return await _send_and_wait()
             finally:
                 self._pending = None
+                self._last_cmd = None
 
     async def _handle_line(self, line: str) -> None:
-        # Unsolicited status format: POINTSTATUS-XXX,VV
-        m = RE_UNSOL.match(line)
+        m = RE_POINTSTATUS.match(line)
         if m:
             idx = int(m.group("idx"))
+            has_dollar = bool(m.group("dollar"))
             val = m.group("val").upper()
+            pending_cmd = self._last_cmd or ""
+            pending_battery = RE_POINT_BATTERY_CMD.match(pending_cmd)
+            pending_status = RE_POINT_STATUS_CMD.match(pending_cmd)
+
+            if has_dollar:
+                battery_hex = f"${val}"
+                if idx in self.data:
+                    self.data[idx].battery_hex = battery_hex
+                    self.async_set_updated_data(self.data)
+
+                if (
+                    self._pending
+                    and not self._pending.done()
+                    and pending_battery
+                    and int(pending_battery.group("idx")) == idx
+                ):
+                    _LOGGER.debug(
+                        "Treating POINTSTATUS dollar response as battery response for point %03d: raw=%r battery=%s",
+                        idx,
+                        line,
+                        battery_hex,
+                    )
+                    self._pending.set_result(battery_hex)
+                else:
+                    _LOGGER.debug(
+                        "Received POINTSTATUS dollar battery update for point %03d: raw=%r battery=%s",
+                        idx,
+                        line,
+                        battery_hex,
+                    )
+                return
+
+            # No dollar marker: interpret as a normal device/shade status value.
             if idx in self.data:
                 self.data[idx].status_hex = val
             else:
                 self.data[idx] = DeviceInfo(idx, None, None, f"Pella Device ({idx:03d})", val, None)
             self.async_set_updated_data(self.data)
+
+            if (
+                self._pending
+                and not self._pending.done()
+                and pending_status
+                and int(pending_status.group("idx")) == idx
+            ):
+                self._pending.set_result(val)
             return
 
         # Ignore echoed command lines
@@ -488,21 +523,44 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
     @classmethod
     def _parse_status_hex(cls, s: str) -> str | None:
-        """Parse a POINTSTATUS value.
+        """Parse a device/shade status value.
 
-        Bridge responses vary:
-        - "01"
-        - "$01"
-        - "POINTSTATUS-001,01"
-        - "POINTSTATUS-001,$01"
+        Pella's PDF distinguishes:
+        - POINTSTATUS-###,VV as device/shade status.
+        - $VV as battery status.
+
+        Therefore POINTSTATUS-###,$VV is intentionally not parsed here as
+        device status. It is handled as battery status instead.
         """
-        tail = cls._after_comma(s).strip()
+        pointstatus = RE_POINTSTATUS.match(s)
+        if pointstatus:
+            if pointstatus.group("dollar"):
+                return None
+            return pointstatus.group("val").upper()
 
-        if tail.startswith("$") and len(tail) == 3:
-            tail = tail[1:]
+        tail = cls._after_comma(s).strip()
+        if tail.startswith("$"):
+            return None
 
         if len(tail) == 2 and all(c in "0123456789abcdefABCDEF" for c in tail):
             return tail.upper()
+        return None
+
+    @classmethod
+    def _parse_battery_hex(cls, s: str | None) -> str | None:
+        """Parse a battery response into $XX format."""
+        if not s:
+            return None
+
+        pointstatus = RE_POINTSTATUS.match(s)
+        if pointstatus:
+            if pointstatus.group("dollar"):
+                return f"${pointstatus.group('val').upper()}"
+            return None
+
+        m = RE_HEX_DOLLAR.search(s)
+        if m:
+            return f"${m.group(1).upper()}"
         return None
 
     @staticmethod
