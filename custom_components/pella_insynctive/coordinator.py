@@ -161,10 +161,6 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             if area_id is not None and ha_dev.area_id != area_id:
                 updates["area_id"] = area_id
 
-            serial_number = self.point_serial_number(idx)
-            if serial_number and ha_dev.serial_number != serial_number:
-                updates["serial_number"] = serial_number
-
             if updates:
                 dev_reg.async_update_device(ha_dev.id, **updates)
 
