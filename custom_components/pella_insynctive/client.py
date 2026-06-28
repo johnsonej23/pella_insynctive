@@ -57,10 +57,11 @@ class TelnetClient:
             if not self._writer:
                 _LOGGER.debug("TX dropped (not connected): %s", line)
                 return
-            self._writer.write((line + "\r\n").encode("utf-8", errors="ignore"))
+            raw_out = (line + "\r\n").encode("utf-8", errors="ignore")
+            self._writer.write(raw_out)
             try:
                 await self._writer.drain()
-                _LOGGER.debug("TX: %s", line)
+                _LOGGER.debug("TELNET TX raw_bytes=%r decoded=%r", raw_out, line)
             except Exception as err:
                 _LOGGER.debug("TX failed, closing: %s", err)
                 await self._close()
@@ -114,8 +115,9 @@ class TelnetClient:
             if not raw:
                 raise ConnectionError("Socket closed")
 
-            line = raw.decode("utf-8", errors="ignore").strip()
+            decoded = raw.decode("utf-8", errors="ignore")
+            line = decoded.strip()
+            _LOGGER.debug("TELNET RX raw_bytes=%r decoded=%r stripped=%r", raw, decoded, line)
             if not line:
                 continue
-            _LOGGER.debug("RX: %s", line)
             await self._on_line(line)
