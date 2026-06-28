@@ -80,7 +80,7 @@ class PellaContactBinary(_BaseBin):
 
     @property
     def name(self) -> str:
-        return f"{self._dev.name} Status" if self._dev else f"Point {self._idx:03d} Status"
+        return "Status"
 
     @property
     def is_on(self) -> bool | None:
@@ -98,7 +98,7 @@ class PellaLockBinary(_BaseBin):
 
     @property
     def name(self) -> str:
-        return f"{self._dev.name} Status" if self._dev else f"Point {self._idx:03d} Status"
+        return "Status"
 
     @property
     def is_on(self) -> bool | None:
@@ -116,7 +116,7 @@ class PellaCoverOffBinary(_BaseBin):
 
     @property
     def name(self) -> str:
-        return f"{self._dev.name} Tamper" if self._dev else f"Point {self._idx:03d} Tamper"
+        return "Tamper"
 
     @property
     def is_on(self) -> bool | None:

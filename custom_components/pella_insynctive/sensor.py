@@ -70,9 +70,7 @@ class PellaBatterySensor(_BaseSensor):
 
     @property
     def name(self) -> str:
-        if self._dev:
-            return f"{self._dev.name} Battery"
-        return f"Point {self._idx:03d} Battery"
+        return "Battery"
 
     @property
     def native_value(self) -> int | None:
@@ -97,9 +95,7 @@ class PellaBridgeIndexSensor(_BaseSensor):
 
     @property
     def name(self) -> str:
-        if self._dev:
-            return f"{self._dev.name} Bridge Index"
-        return f"Point {self._idx:03d} Bridge Index"
+        return "Bridge Index"
 
     @property
     def native_value(self) -> int:
@@ -115,9 +111,7 @@ class PellaRawStatusSensor(_BaseSensor):
 
     @property
     def name(self) -> str:
-        if self._dev:
-            return f"{self._dev.name} Raw Status"
-        return f"Point {self._idx:03d} Raw Status"
+        return "Raw Status"
 
     @property
     def native_value(self) -> str | None:

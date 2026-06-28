@@ -56,10 +56,7 @@ class PellaShade(CoverEntity):
 
     @property
     def name(self) -> str:
-        dev = self.coordinator.data.get(self._idx)
-        if dev:
-            return dev.name.replace("Pella Shade", "Shade")
-        return f"Shade {self._idx:03d}"
+        return "Shade"
 
     @property
     def current_cover_position(self) -> int | None:
