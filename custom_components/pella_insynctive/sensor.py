@@ -117,4 +117,4 @@ class PellaRawStatusSensor(_BaseSensor):
     def native_value(self) -> str | None:
         if not self._dev:
             return None
-        return self._dev.status_hex
+        return getattr(self._dev, "raw_status_hex", None) or self._dev.status_hex
