@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 from .coordinator import PellaCoordinator
 
-PLATFORMS: list[str] = ["cover", "binary_sensor", "sensor"]
+PLATFORMS: list[Platform] = [
+    Platform.COVER,
+    Platform.BINARY_SENSOR,
+    Platform.SENSOR,
+    Platform.BUTTON,
+]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -18,7 +24,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = PellaCoordinator(hass, entry)
     await coordinator.async_start()
 
-    # Register the bridge as a device (hub) in the device registry
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
