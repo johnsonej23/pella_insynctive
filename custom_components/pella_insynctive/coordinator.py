@@ -109,6 +109,13 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
         """Return a stable unique ID for an entity on a bridge point."""
         return f"{self.entry.entry_id}_{self.point_key(idx)}_{suffix}"
 
+    def point_serial_number(self, idx: int) -> str | None:
+        """Return the Pella point serial number for a bridge point."""
+        dev = self.data.get(idx)
+        if dev and dev.point_id:
+            return dev.point_id
+        return None
+
     def point_device_info(self, idx: int) -> dict:
         dev = self.data.get(idx)
         point_key = self.point_key(idx)
@@ -118,6 +125,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             "name": self._device_name_override(dev, idx),
             "manufacturer": "Pella",
             "model": self._device_model(dev),
+            "serial_number": self.point_serial_number(idx),
             "via_device": (DOMAIN, self.bridge_id),
         }
 
@@ -152,6 +160,10 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             area_id = self._device_area_override(idx)
             if area_id is not None and ha_dev.area_id != area_id:
                 updates["area_id"] = area_id
+
+            serial_number = self.point_serial_number(idx)
+            if serial_number and ha_dev.serial_number != serial_number:
+                updates["serial_number"] = serial_number
 
             if updates:
                 dev_reg.async_update_device(ha_dev.id, **updates)
