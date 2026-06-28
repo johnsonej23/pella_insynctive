@@ -76,8 +76,7 @@ class PellaContactBinary(_BaseBin):
 
     @property
     def unique_id(self) -> str:
-        base = self._dev.point_id if self._dev and self._dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_contact_{base}"
+        return self.coordinator.point_unique_id(self._idx, "contact")
 
     @property
     def name(self) -> str:
@@ -95,8 +94,7 @@ class PellaLockBinary(_BaseBin):
 
     @property
     def unique_id(self) -> str:
-        base = self._dev.point_id if self._dev and self._dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_unlocked_{base}"
+        return self.coordinator.point_unique_id(self._idx, "unlocked")
 
     @property
     def name(self) -> str:
@@ -114,8 +112,7 @@ class PellaCoverOffBinary(_BaseBin):
 
     @property
     def unique_id(self) -> str:
-        base = self._dev.point_id if self._dev and self._dev.point_id else f"point_{self._idx:03d}"
-        return f"{self._entry_id}_coveroff_{base}"
+        return self.coordinator.point_unique_id(self._idx, "coveroff")
 
     @property
     def name(self) -> str:
