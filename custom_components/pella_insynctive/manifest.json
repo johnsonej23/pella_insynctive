@@ -6,6 +6,6 @@
   "iot_class": "local_push",
   "requirements": [],
   "loggers": ["custom_components.pella_insynctive"],
-  "version": "0.4.23",
+  "version": "0.4.24",
   "codeowners": []
 }
