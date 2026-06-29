@@ -195,6 +195,7 @@ class PellaBatterySensor(_BasePointSensor):
 
 class PellaBridgeIndexSensor(_BasePointSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     @property
     def unique_id(self) -> str:
@@ -211,6 +212,7 @@ class PellaBridgeIndexSensor(_BasePointSensor):
 
 class PellaRawStatusSensor(_BasePointSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     @property
     def unique_id(self) -> str:
