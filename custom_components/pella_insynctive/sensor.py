@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from dataclasses import dataclass
+
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorEntityDescription
 from homeassistant.const import PERCENTAGE
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -11,38 +13,120 @@ from .const import DOMAIN
 from .coordinator import PellaCoordinator
 
 
+@dataclass(frozen=True, kw_only=True)
+class PellaBridgeSensorDescription(SensorEntityDescription):
+    attr: str
+
+
+BRIDGE_DESCRIPTIONS: tuple[PellaBridgeSensorDescription, ...] = (
+    PellaBridgeSensorDescription(
+        key="connection_host",
+        name="Connection Host",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attr="configured_host",
+    ),
+    PellaBridgeSensorDescription(
+        key="static_ip",
+        name="Static IP",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attr="static_ip",
+    ),
+    PellaBridgeSensorDescription(
+        key="netmask",
+        name="Netmask",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attr="netmask",
+    ),
+    PellaBridgeSensorDescription(
+        key="gateway",
+        name="Gateway",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attr="gateway",
+    ),
+    PellaBridgeSensorDescription(
+        key="dns",
+        name="DNS",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attr="dns",
+    ),
+)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coord: PellaCoordinator = hass.data[DOMAIN][entry.entry_id]
+    storage_key = f"{DOMAIN}_sensor_ids_{entry.entry_id}"
+    added_unique_ids: set[str] = hass.data.setdefault(storage_key, set())
 
-    entities: list[SensorEntity] = []
-    for idx in coord.data:
-        entities.append(PellaBatterySensor(coord, entry.entry_id, idx))
-        entities.append(PellaBridgeIndexSensor(coord, entry.entry_id, idx))
-        entities.append(PellaRawStatusSensor(coord, entry.entry_id, idx))
+    def _make_new_sensors() -> list[SensorEntity]:
+        new_entities: list[SensorEntity] = []
 
-    async_add_entities(entities, update_before_add=False)
+        for desc in BRIDGE_DESCRIPTIONS:
+            entity = PellaBridgeInfoSensor(coord, entry.entry_id, desc)
+            if entity.unique_id not in added_unique_ids:
+                new_entities.append(entity)
+                added_unique_ids.add(entity.unique_id)
+
+        for idx in coord.data:
+            for cls in (PellaBatterySensor, PellaBridgeIndexSensor, PellaRawStatusSensor):
+                entity = cls(coord, entry.entry_id, idx)
+                if entity.unique_id not in added_unique_ids:
+                    new_entities.append(entity)
+                    added_unique_ids.add(entity.unique_id)
+
+        return new_entities
+
+    async_add_entities(_make_new_sensors(), update_before_add=False)
 
     @callback
     def _on_update() -> None:
-        existing = {e.unique_id for e in hass.data.setdefault(f"{DOMAIN}_sens_{entry.entry_id}", [])}
-        new = []
-        for idx in coord.data:
-            for cls in (PellaBatterySensor, PellaBridgeIndexSensor, PellaRawStatusSensor):
-                ent = cls(coord, entry.entry_id, idx)
-                if ent.unique_id not in existing:
-                    new.append(ent)
-        if new:
-            async_add_entities(new, update_before_add=False)
+        new_entities = _make_new_sensors()
+        if new_entities:
+            async_add_entities(new_entities, update_before_add=False)
 
-    coord.async_add_listener(_on_update)
+    entry.async_on_unload(coord.async_add_listener(_on_update))
 
 
-class _BaseSensor(SensorEntity):
+class PellaBridgeInfoSensor(SensorEntity):
+    def __init__(
+        self,
+        coord: PellaCoordinator,
+        entry_id: str,
+        description: PellaBridgeSensorDescription,
+    ) -> None:
+        self.coordinator = coord
+        self._entry_id = entry_id
+        self.entity_description = description
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_bridge_{self.entity_description.key}"
+
+    @property
+    def name(self) -> str:
+        return self.entity_description.name
+
+    @property
+    def device_info(self):
+        return self.coordinator.bridge_device_info()
+
+    @property
+    def native_value(self) -> str | None:
+        return getattr(self.coordinator.bridge_info, self.entity_description.attr, None)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
+
+
+class _BasePointSensor(SensorEntity):
     def __init__(self, coord: PellaCoordinator, entry_id: str, idx: int):
         self.coordinator = coord
         self._entry_id = entry_id
         self._idx = idx
-        coord.hass.data.setdefault(f"{DOMAIN}_sens_{entry_id}", []).append(self)
 
     @property
     def device_info(self):
@@ -60,7 +144,7 @@ class _BaseSensor(SensorEntity):
         self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
 
 
-class PellaBatterySensor(_BaseSensor):
+class PellaBatterySensor(_BasePointSensor):
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = PERCENTAGE
 
@@ -86,7 +170,7 @@ class PellaBatterySensor(_BaseSensor):
             return None
 
 
-class PellaBridgeIndexSensor(_BaseSensor):
+class PellaBridgeIndexSensor(_BasePointSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
@@ -102,7 +186,7 @@ class PellaBridgeIndexSensor(_BaseSensor):
         return int(self._idx)
 
 
-class PellaRawStatusSensor(_BaseSensor):
+class PellaRawStatusSensor(_BasePointSensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property

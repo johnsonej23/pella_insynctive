@@ -40,6 +40,22 @@ RE_HEX_DOLLAR = re.compile(r"\$([0-9A-Fa-f]{2})")
 RE_AFTER_COMMA = re.compile(r",\s*(.+)$")
 RE_INDEXED_QUERY = re.compile(r"^\?(?P<cmd>POINTSTATUS|POINTBATTERYGET|POINTDEVICE|POINTID)-(?P<idx>\d{3})$")
 
+BRIDGE_NETWORK_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("static_ip", "?GETSTATICIP"),
+    ("netmask", "?GETNETMASK"),
+    ("gateway", "?GETGATEWAY"),
+    ("dns", "?GETDNS"),
+)
+
+
+@dataclass
+class BridgeInfo:
+    configured_host: str | None = None
+    static_ip: str | None = None
+    netmask: str | None = None
+    gateway: str | None = None
+    dns: str | None = None
+
 
 @dataclass
 class DeviceInfo:
@@ -59,6 +75,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
         self._host = entry.data[CONF_HOST]
         self._port = entry.data[CONF_PORT]
+        self.bridge_info = BridgeInfo(configured_host=self._host)
 
         o = entry.options
         self._poll_s = int(o.get(OPT_POLL_INTERVAL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS))
@@ -100,7 +117,15 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
     @property
     def bridge_name(self) -> str:
-        return f"Pella Insynctive ({self._host})"
+        return "Pella Insynctive Bridge"
+
+    def bridge_device_info(self) -> dict:
+        return {
+            "identifiers": {(DOMAIN, self.bridge_id)},
+            "name": self.bridge_name,
+            "manufacturer": "Pella",
+            "model": "Insynctive Bridge",
+        }
 
     @staticmethod
     def point_key(idx: int) -> str:
@@ -253,6 +278,8 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
         if not self._client.is_connected:
             return
 
+        await self._refresh_bridge_network_info()
+
         count = 0
         try:
             count_str = await self._query("?POINTCOUNT", timeout=5.0)
@@ -324,6 +351,18 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
         self.async_set_updated_data(self.data)
         self._apply_device_overrides_to_registry()
+
+    async def _refresh_bridge_network_info(self) -> None:
+        for attr, cmd in BRIDGE_NETWORK_COMMANDS:
+            try:
+                raw = await self._query(cmd, timeout=5.0)
+                value = self._parse_network_value(raw)
+                setattr(self.bridge_info, attr, value)
+                _LOGGER.debug("Bridge network response for %s: raw=%r parsed=%r", attr, raw, value)
+            except TimeoutError:
+                _LOGGER.debug("Timeout querying bridge network value with %s", cmd)
+            except Exception as err:
+                _LOGGER.debug("Error querying bridge network value with %s: %s", cmd, err)
 
     async def _poll_tick(self, _now) -> None:
         if not self._client.is_connected or not self.data:
@@ -504,6 +543,13 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
     def _after_comma(s: str) -> str:
         m = RE_AFTER_COMMA.search(s)
         return m.group(1).strip() if m else s.strip()
+
+    @classmethod
+    def _parse_network_value(cls, s: str) -> str | None:
+        tail = cls._after_comma(s).strip()
+        if not tail or tail.startswith("?"):
+            return None
+        return tail
 
     @classmethod
     def _parse_device_type(cls, s: str) -> int | None:
