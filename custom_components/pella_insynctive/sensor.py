@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorEntityDescription
@@ -12,16 +13,19 @@ from homeassistant.helpers.entity import EntityCategory
 from .const import DOMAIN
 from .coordinator import PellaCoordinator
 
+RE_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
 
 @dataclass(frozen=True, kw_only=True)
 class PellaBridgeSensorDescription(SensorEntityDescription):
     attr: str
+    parse_ipv4: bool = False
 
 
 BRIDGE_DESCRIPTIONS: tuple[PellaBridgeSensorDescription, ...] = (
     PellaBridgeSensorDescription(
         key="connection_host",
-        name="Connection Host",
+        name="Assigned IP",
         entity_category=EntityCategory.DIAGNOSTIC,
         attr="configured_host",
     ),
@@ -30,24 +34,28 @@ BRIDGE_DESCRIPTIONS: tuple[PellaBridgeSensorDescription, ...] = (
         name="Static IP",
         entity_category=EntityCategory.DIAGNOSTIC,
         attr="static_ip",
+        parse_ipv4=True,
     ),
     PellaBridgeSensorDescription(
         key="netmask",
         name="Netmask",
         entity_category=EntityCategory.DIAGNOSTIC,
         attr="netmask",
+        parse_ipv4=True,
     ),
     PellaBridgeSensorDescription(
         key="gateway",
         name="Gateway",
         entity_category=EntityCategory.DIAGNOSTIC,
         attr="gateway",
+        parse_ipv4=True,
     ),
     PellaBridgeSensorDescription(
         key="dns",
         name="DNS",
         entity_category=EntityCategory.DIAGNOSTIC,
         attr="dns",
+        parse_ipv4=True,
     ),
 )
 
@@ -112,7 +120,22 @@ class PellaBridgeInfoSensor(SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        return getattr(self.coordinator.bridge_info, self.entity_description.attr, None)
+        value = getattr(self.coordinator.bridge_info, self.entity_description.attr, None)
+        if value is None:
+            return None
+
+        value = str(value).strip()
+        if not value:
+            return None
+
+        if not self.entity_description.parse_ipv4:
+            return value
+
+        match = RE_IPV4.search(value)
+        if not match:
+            return None
+
+        return match.group(0)
 
     @callback
     def _handle_coordinator_update(self) -> None:
