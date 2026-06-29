@@ -96,9 +96,7 @@ class PellaPointButton(ButtonEntity):
 
     @property
     def name(self) -> str:
-        dev = self.coordinator.data.get(self._idx)
-        dev_name = dev.name if dev else f"Point {self._idx:03d}"
-        return f"{dev_name} {self.entity_description.name}"
+        return self.entity_description.name
 
     async def async_press(self) -> None:
         fn = getattr(self.coordinator, self.entity_description.press_fn)
