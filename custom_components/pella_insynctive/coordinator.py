@@ -98,6 +98,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
         self._poll_unsub = None
         self._battery_unsub = None
+        self._startup_task: asyncio.Task | None = None
 
         super().__init__(hass, _LOGGER, name="pella_insynctive", update_interval=None)
         self.data: dict[int, DeviceInfo] = {}
@@ -255,7 +256,7 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
 
     async def async_start(self) -> None:
         await self._client.start()
-        self.hass.async_create_task(self._startup_discovery())
+        self._startup_task = self.hass.async_create_task(self._startup_discovery())
 
         if self._poll_s > 0:
             self._poll_unsub = async_track_time_interval(self.hass, self._poll_tick, timedelta(seconds=self._poll_s))
@@ -265,92 +266,127 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
             )
 
     async def async_stop(self) -> None:
+        if self._startup_task:
+            self._startup_task.cancel()
+            try:
+                await self._startup_task
+            except asyncio.CancelledError:
+                pass
+            self._startup_task = None
         if self._poll_unsub:
             self._poll_unsub()
             self._poll_unsub = None
         if self._battery_unsub:
             self._battery_unsub()
             self._battery_unsub = None
+        if self._pending and not self._pending.done():
+            self._pending.cancel()
+        self._pending = None
+        self._last_cmd = None
         await self._client.stop()
 
+    async def _wait_for_connection(self, timeout: float = 120.0) -> bool:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not self._client.is_connected:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.5, remaining))
+        return True
+
     async def _startup_discovery(self) -> None:
-        await asyncio.sleep(2)
-        if not self._client.is_connected:
-            return
-
-        await self._refresh_bridge_network_info()
-
-        count = 0
         try:
-            count_str = await self._query("?POINTCOUNT", timeout=5.0)
-            digits = "".join(ch for ch in count_str if ch.isdigit())
-            count = int(digits) if digits else 0
-        except TimeoutError:
-            _LOGGER.warning("Timeout on ?POINTCOUNT; falling back to scan")
+            if not await self._wait_for_connection():
+                _LOGGER.warning("Timed out waiting for bridge connection during startup discovery")
+                return
 
-        # If POINTCOUNT is 2, we should at least try points 001..002.
-        indices = range(1, 129) if (self._scan_all_128 or count == 0) else range(1, min(128, count) + 1)
-        _LOGGER.debug("Discovery scanning %s points (POINTCOUNT=%s, scan_all_128=%s)", len(list(indices)), count, self._scan_all_128)
+            # Give the bridge a brief moment after the TCP connection opens before
+            # starting the command/response discovery sequence. This is especially
+            # helpful immediately after changing the bridge host through reconfigure.
+            await asyncio.sleep(0.5)
 
-        for i in indices:
-            idx = f"{i:03d}"
+            await self._refresh_bridge_network_info()
+
+            count = 0
             try:
-                dtype_raw = await self._query(f"?POINTDEVICE-{idx}", timeout=5.0)
-                pid_raw = await self._query(f"?POINTID-{idx}", timeout=5.0)
-                status_raw = await self._query(f"?POINTSTATUS-{idx}", timeout=5.0)
-
-                # Battery is not included in POINTSTATUS unless the bridge is replying to a
-                # POINTBATTERYGET command. Fetch once during discovery so the sensor does not
-                # sit at Unknown for hours until the first battery poll interval.
-                battery_raw = None
-                try:
-                    battery_raw = await self._query(f"?POINTBATTERYGET-{idx}", timeout=5.0)
-                    _LOGGER.debug("Battery discovery response for point %s: raw=%r", idx, battery_raw)
-                except TimeoutError:
-                    _LOGGER.debug("Timeout querying battery for point %s during discovery", idx)
-
-                device_type = self._parse_device_type(dtype_raw)
-                point_id = self._parse_point_id(pid_raw)
-                status_hex = self._parse_status_hex(status_raw)
-
-                battery_hex = None
-                if battery_raw:
-                    battery_hex = self._parse_battery_hex(battery_raw)
-                    if not battery_hex:
-                        _LOGGER.debug(
-                            "Unable to parse discovery battery response for point %s: raw=%r device_type=%s point_id=%s",
-                            idx,
-                            battery_raw,
-                            device_type,
-                            point_id,
-                        )
-
-                # If we can't parse a device type, still create the device so HA shows it,
-                # and logs will tell us what came back.
-                name = self._default_name(device_type, i, point_id)
-
-                self.data[i] = DeviceInfo(i, point_id, device_type, name, None, battery_hex)
-                if status_hex is not None:
-                    self._set_status_value(i, status_hex, source="discovery")
-                _LOGGER.debug(
-                    "Discovered point %s: type_raw=%s type=%s id_raw=%s id=%s status_raw=%s status=%s",
-                    idx,
-                    dtype_raw,
-                    device_type,
-                    pid_raw,
-                    point_id,
-                    status_raw,
-                    status_hex,
-                )
+                count_str = await self._query("?POINTCOUNT", timeout=5.0)
+                digits = "".join(ch for ch in count_str if ch.isdigit())
+                count = int(digits) if digits else 0
             except TimeoutError:
-                _LOGGER.debug("Timeout querying point %s; skipping", idx)
-                continue
-            except Exception as err:
-                _LOGGER.debug("Error querying point %s; skipping: %s", idx, err)
-                continue
+                _LOGGER.warning("Timeout on ?POINTCOUNT; falling back to scan")
 
-        self.async_set_updated_data(self.data)
-        self._apply_device_overrides_to_registry()
+            # If POINTCOUNT is 2, we should at least try points 001..002.
+            indices = range(1, 129) if (self._scan_all_128 or count == 0) else range(1, min(128, count) + 1)
+            _LOGGER.debug(
+                "Discovery scanning %s points (POINTCOUNT=%s, scan_all_128=%s)",
+                len(list(indices)),
+                count,
+                self._scan_all_128,
+            )
+
+            for i in indices:
+                idx = f"{i:03d}"
+                try:
+                    dtype_raw = await self._query(f"?POINTDEVICE-{idx}", timeout=5.0)
+                    pid_raw = await self._query(f"?POINTID-{idx}", timeout=5.0)
+                    status_raw = await self._query(f"?POINTSTATUS-{idx}", timeout=5.0)
+
+                    # Battery is not included in POINTSTATUS unless the bridge is replying to a
+                    # POINTBATTERYGET command. Fetch once during discovery so the sensor does not
+                    # sit at Unknown for hours until the first battery poll interval.
+                    battery_raw = None
+                    try:
+                        battery_raw = await self._query(f"?POINTBATTERYGET-{idx}", timeout=5.0)
+                        _LOGGER.debug("Battery discovery response for point %s: raw=%r", idx, battery_raw)
+                    except TimeoutError:
+                        _LOGGER.debug("Timeout querying battery for point %s during discovery", idx)
+
+                    device_type = self._parse_device_type(dtype_raw)
+                    point_id = self._parse_point_id(pid_raw)
+                    status_hex = self._parse_status_hex(status_raw)
+
+                    battery_hex = None
+                    if battery_raw:
+                        battery_hex = self._parse_battery_hex(battery_raw)
+                        if not battery_hex:
+                            _LOGGER.debug(
+                                "Unable to parse discovery battery response for point %s: raw=%r device_type=%s point_id=%s",
+                                idx,
+                                battery_raw,
+                                device_type,
+                                point_id,
+                            )
+
+                    # If we can't parse a device type, still create the device so HA shows it,
+                    # and logs will tell us what came back.
+                    name = self._default_name(device_type, i, point_id)
+
+                    self.data[i] = DeviceInfo(i, point_id, device_type, name, None, battery_hex)
+                    if status_hex is not None:
+                        self._set_status_value(i, status_hex, source="discovery")
+                    _LOGGER.debug(
+                        "Discovered point %s: type_raw=%s type=%s id_raw=%s id=%s status_raw=%s status=%s",
+                        idx,
+                        dtype_raw,
+                        device_type,
+                        pid_raw,
+                        point_id,
+                        status_raw,
+                        status_hex,
+                    )
+                except TimeoutError:
+                    _LOGGER.debug("Timeout querying point %s; skipping", idx)
+                    continue
+                except Exception as err:
+                    _LOGGER.debug("Error querying point %s; skipping: %s", idx, err)
+                    continue
+
+            self.async_set_updated_data(self.data)
+            self._apply_device_overrides_to_registry()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.exception("Startup discovery failed: %s", err)
 
     async def _refresh_bridge_network_info(self) -> None:
         for attr, cmd in BRIDGE_NETWORK_COMMANDS:
