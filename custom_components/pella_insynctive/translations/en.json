@@ -26,13 +26,14 @@
     }
   },
   "options": {
-    "menu": {
-      "init": {
-        "general": "General integration options",
-        "bridge_network": "Configure bridge network"
-      }
-    },
     "step": {
+      "init": {
+        "title": "Pella Insynctive configuration",
+        "menu_options": {
+          "general": "General integration options",
+          "bridge_network": "Configure bridge network"
+        }
+      },
       "general": {
         "title": "Pella Insynctive options"
       },
