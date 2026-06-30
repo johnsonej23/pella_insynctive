@@ -2,9 +2,27 @@
   "config": {
     "step": {
       "user": {
-        "title": "Pella Insynctive V2 Bridge (Telnet)",
-        "description": "Enter the local IP and Telnet port (default 23)."
+        "title": "Pella Insynctive",
+        "description": "Enter the IP address or hostname of the Pella Insynctive bridge.",
+        "data": {
+          "host": "Host/IP address",
+          "port": "Port"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Pella Insynctive",
+        "description": "Update the IP address, hostname, or port Home Assistant uses to connect to the Pella Insynctive bridge.",
+        "data": {
+          "host": "Host/IP address",
+          "port": "Port"
+        }
       }
+    },
+    "error": {
+      "required": "Host/IP address is required."
+    },
+    "abort": {
+      "reconfigure_successful": "Pella Insynctive connection settings were saved and the integration is reloading. Entities should update within about one minute."
     }
   }
 }
