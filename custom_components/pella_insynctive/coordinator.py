@@ -5,9 +5,11 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import timedelta
+from ipaddress import IPv4Address, ip_address
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -399,6 +401,73 @@ class PellaCoordinator(DataUpdateCoordinator[dict[int, DeviceInfo]]):
                 _LOGGER.debug("Timeout querying bridge network value with %s", cmd)
             except Exception as err:
                 _LOGGER.debug("Error querying bridge network value with %s: %s", cmd, err)
+
+    async def async_refresh_bridge_network_info(self) -> None:
+        """Refresh bridge network diagnostic values on demand."""
+        await self._refresh_bridge_network_info()
+        self.async_set_updated_data(self.data)
+
+    async def async_set_static_network(self, *, static_ip: str, netmask: str, gateway: str, dns: str) -> None:
+        """Write static network settings to the bridge and reload using the new address."""
+        static_ip = self._validate_ipv4(static_ip, "static_ip")
+        netmask = self._validate_ipv4(netmask, "netmask")
+        gateway = self._validate_ipv4(gateway, "gateway")
+        dns = self._validate_ipv4(dns, "dns")
+
+        commands = (
+            ("static_ip", f"!SETSTATICIP,${static_ip}"),
+            ("netmask", f"!SETNETMASK,${netmask}"),
+            ("gateway", f"!SETGATEWAY,${gateway}"),
+            ("dns", f"!SETDNS,${dns}"),
+        )
+
+        for attr, command in commands:
+            response = await self._query(command, timeout=5.0)
+            if "INVALID" in response.upper():
+                raise HomeAssistantError(f"Bridge rejected {attr}: {response}")
+            _LOGGER.debug("Bridge accepted %s command: %s", attr, response)
+
+        await self._client.send("!BRIDGESETSTATIC")
+
+        self.bridge_info.configured_host = static_ip
+        self.bridge_info.static_ip = static_ip
+        self.bridge_info.netmask = netmask
+        self.bridge_info.gateway = gateway
+        self.bridge_info.dns = dns
+        self.async_set_updated_data(self.data)
+
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            data={**self.entry.data, CONF_HOST: static_ip, CONF_PORT: self._port},
+        )
+        self.hass.async_create_task(self._reload_entry_after_bridge_reboot(self.entry.entry_id))
+
+    async def async_set_dhcp(self) -> None:
+        """Return the bridge to DHCP mode and reload the integration after reboot."""
+        await self._client.send("!BRIDGESETDHCP")
+
+        self.bridge_info.static_ip = None
+        self.bridge_info.netmask = None
+        self.bridge_info.gateway = None
+        self.bridge_info.dns = None
+        self.async_set_updated_data(self.data)
+
+        self.hass.async_create_task(self._reload_entry_after_bridge_reboot(self.entry.entry_id))
+
+    async def _reload_entry_after_bridge_reboot(self, entry_id: str) -> None:
+        await asyncio.sleep(15)
+        await self.hass.config_entries.async_reload(entry_id)
+
+    @staticmethod
+    def _validate_ipv4(value: str, field: str) -> str:
+        value = str(value).strip()
+        try:
+            parsed = ip_address(value)
+        except ValueError as err:
+            raise HomeAssistantError(f"{field} must be a valid IPv4 address") from err
+        if not isinstance(parsed, IPv4Address):
+            raise HomeAssistantError(f"{field} must be a valid IPv4 address")
+        return str(parsed)
 
     async def _poll_tick(self, _now) -> None:
         if not self._client.is_connected or not self.data:
