@@ -24,5 +24,48 @@
     "abort": {
       "reconfigure_successful": "Pella Insynctive connection settings were saved and the integration is reloading. Entities should update within about one minute."
     }
+  },
+  "options": {
+    "menu": {
+      "init": {
+        "general": "General integration options",
+        "bridge_network": "Configure bridge network"
+      }
+    },
+    "step": {
+      "general": {
+        "title": "Pella Insynctive options"
+      },
+      "bridge_network": {
+        "title": "Configure Bridge Network",
+        "description": "Choose whether the bridge should use DHCP or a static IP address. Static IP will show the required network fields on the next screen.",
+        "data": {
+          "network_mode": "Network mode"
+        }
+      },
+      "static_network": {
+        "title": "Static IP Settings",
+        "description": "Enter all four static network values. Saving will write the settings to the bridge, save them to memory, reboot the bridge, update Home Assistant to the new static IP, and reload the integration.",
+        "data": {
+          "static_ip": "Static IP",
+          "netmask": "Netmask",
+          "gateway": "Gateway",
+          "dns": "DNS"
+        }
+      },
+      "dhcp_confirm": {
+        "title": "Return Bridge to DHCP",
+        "description": "This will remove static IP settings from the bridge, return it to DHCP mode, and reboot the bridge. If DHCP assigns a different IP address, use Reconfigure afterward to point Home Assistant to the new address.",
+        "data": {
+          "confirm_dhcp": "I understand and want to switch the bridge to DHCP"
+        }
+      }
+    },
+    "error": {
+      "bridge_not_loaded": "The Pella Insynctive bridge is not currently loaded.",
+      "cannot_set_static_network": "Could not write static network settings to the bridge. Check the values and bridge connection, then try again.",
+      "cannot_set_dhcp": "Could not switch the bridge to DHCP. Check the bridge connection and try again.",
+      "confirm_required": "Confirm before switching the bridge to DHCP."
+    }
   }
 }
