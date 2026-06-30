@@ -1,29 +1,45 @@
 set_static_network:
   name: Set static network settings
-  description: Set static IP settings on the Pella Insynctive bridge.
+  description: Set static IP settings on the Pella Insynctive bridge, save them to memory, and reboot the bridge. Home Assistant will update this integration to connect to the new static IP.
   fields:
+    entry_id:
+      name: Config entry ID
+      description: Optional. Only needed if more than one Pella Insynctive bridge is configured.
+      required: false
+      selector:
+        text:
     static_ip:
       name: Static IP
+      description: Static IP address to assign to the bridge.
       required: true
       selector:
         text:
     netmask:
       name: Netmask
+      description: Subnet mask for the bridge.
       required: true
       selector:
         text:
     gateway:
       name: Gateway
+      description: Gateway IP address for the bridge.
       required: true
       selector:
         text:
     dns:
       name: DNS
+      description: DNS server IP address for the bridge.
       required: true
       selector:
         text:
 
 set_dhcp:
   name: Set DHCP mode
-  description: Return the Pella Insynctive bridge to DHCP mode.
-  fields: {}
+  description: Remove static IP settings from the Pella Insynctive bridge and return it to DHCP mode. The bridge will reboot. If DHCP assigns a different IP address, use Reconfigure afterward.
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: Optional. Only needed if more than one Pella Insynctive bridge is configured.
+      required: false
+      selector:
+        text:
