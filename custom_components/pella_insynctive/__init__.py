@@ -16,11 +16,29 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+def _clear_entity_tracking(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clear per-platform dynamic entity tracking for this config entry.
+
+    These values live in hass.data and can survive a config entry reload. If they
+    are left behind, the platforms may think point entities were already added
+    and skip attaching fresh entities to the new coordinator after reconfigure.
+    """
+    for key in (
+        f"{DOMAIN}_bin_{entry.entry_id}",
+        f"{DOMAIN}_shade_{entry.entry_id}",
+        f"{DOMAIN}_sensor_ids_{entry.entry_id}",
+        f"{DOMAIN}_button_{entry.entry_id}",
+    ):
+        hass.data.pop(key, None)
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    _clear_entity_tracking(hass, entry)
+
     coordinator = PellaCoordinator(hass, entry)
     await coordinator.async_start()
 
@@ -47,4 +65,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         await coordinator.async_stop()
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        _clear_entity_tracking(hass, entry)
     return unload_ok
