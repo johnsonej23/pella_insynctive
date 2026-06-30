@@ -1,0 +1,29 @@
+set_static_network:
+  name: Set static network settings
+  description: Set static IP settings on the Pella Insynctive bridge.
+  fields:
+    static_ip:
+      name: Static IP
+      required: true
+      selector:
+        text:
+    netmask:
+      name: Netmask
+      required: true
+      selector:
+        text:
+    gateway:
+      name: Gateway
+      required: true
+      selector:
+        text:
+    dns:
+      name: DNS
+      required: true
+      selector:
+        text:
+
+set_dhcp:
+  name: Set DHCP mode
+  description: Return the Pella Insynctive bridge to DHCP mode.
+  fields: {}
