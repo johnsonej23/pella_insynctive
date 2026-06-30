@@ -1,1 +1,1 @@
-{"domain":"pella_insynctive","name":"Pella Insynctive","config_flow":true,"integration_type":"hub","iot_class":"local_push","requirements":[],"loggers":["custom_components.pella_insynctive"],"version":"0.4.29","codeowners":[]}
+{"domain":"pella_insynctive","name":"Pella Insynctive","config_flow":true,"integration_type":"hub","iot_class":"local_push","requirements":[],"loggers":["custom_components.pella_insynctive"],"version":"0.4.30","codeowners":[]}
