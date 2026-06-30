@@ -17,7 +17,16 @@ class PellaButtonEntityDescription(ButtonEntityDescription):
     press_fn: str
 
 
-DESCRIPTIONS: tuple[PellaButtonEntityDescription, ...] = (
+BRIDGE_DESCRIPTIONS: tuple[PellaButtonEntityDescription, ...] = (
+    PellaButtonEntityDescription(
+        key="fetch_network_information",
+        name="Fetch Network Information",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        press_fn="async_refresh_bridge_network_info",
+    ),
+)
+
+POINT_DESCRIPTIONS: tuple[PellaButtonEntityDescription, ...] = (
     PellaButtonEntityDescription(
         key="refresh_battery",
         name="Refresh Battery",
@@ -46,8 +55,15 @@ async def async_setup_entry(
         existing = {entity.unique_id for entity in hass.data[storage_key]}
         new_entities: list[ButtonEntity] = []
 
+        for desc in BRIDGE_DESCRIPTIONS:
+            entity = PellaBridgeButton(coord, entry.entry_id, desc)
+            if entity.unique_id not in existing:
+                new_entities.append(entity)
+                hass.data[storage_key].append(entity)
+                existing.add(entity.unique_id)
+
         for idx in coord.data:
-            for desc in DESCRIPTIONS:
+            for desc in POINT_DESCRIPTIONS:
                 entity = PellaPointButton(coord, entry.entry_id, idx, desc)
                 if entity.unique_id not in existing:
                     new_entities.append(entity)
@@ -65,6 +81,37 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     entry.async_on_unload(coord.async_add_listener(_on_update))
+
+
+class PellaBridgeButton(ButtonEntity):
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: PellaCoordinator,
+        entry_id: str,
+        description: PellaButtonEntityDescription,
+    ) -> None:
+        self.coordinator = coordinator
+        self._entry_id = entry_id
+        self.entity_description = description
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_bridge_{self.entity_description.key}"
+
+    @property
+    def device_info(self):
+        return self.coordinator.bridge_device_info()
+
+    @property
+    def name(self) -> str:
+        return self.entity_description.name
+
+    async def async_press(self) -> None:
+        fn = getattr(self.coordinator, self.entity_description.press_fn)
+        await fn()
 
 
 class PellaPointButton(ButtonEntity):
@@ -91,7 +138,6 @@ class PellaPointButton(ButtonEntity):
 
     @property
     def device_info(self):
-        # Attach to the point device, not the bridge.
         return self.coordinator.point_device_info(self._idx)
 
     @property
