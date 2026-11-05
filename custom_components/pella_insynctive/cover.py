@@ -12,25 +12,21 @@ from .coordinator import PellaCoordinator
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coord: PellaCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    async_add_entities(
-        [PellaShade(coord, entry.entry_id, idx) for idx, d in coord.data.items() if d.device_type == DEVICE_SHADE],
-        update_before_add=False,
-    )
+    registered: set[int] = set()
 
     @callback
     def _on_update() -> None:
-        existing = {e.unique_id for e in hass.data.setdefault(f"{DOMAIN}_shade_{entry.entry_id}", [])}
-        new = []
-        for idx, d in coord.data.items():
-            if d.device_type == DEVICE_SHADE:
-                ent = PellaShade(coord, entry.entry_id, idx)
-                if ent.unique_id not in existing:
-                    new.append(ent)
-        if new:
-            async_add_entities(new, update_before_add=False)
+        new_entities: list[CoverEntity] = []
+        for idx, dev in coord.data.items():
+            if dev.device_type == DEVICE_SHADE and idx not in registered:
+                registered.add(idx)
+                new_entities.append(PellaShade(coord, entry.entry_id, idx))
 
-    coord.async_add_listener(_on_update)
+        if new_entities:
+            async_add_entities(new_entities, update_before_add=False)
 
+    _on_update()
+    entry.async_on_unload(coord.async_add_listener(_on_update))
 
 class PellaShade(CoverEntity):
     _attr_supported_features = (
@@ -44,7 +40,6 @@ class PellaShade(CoverEntity):
         self.coordinator = coord
         self._entry_id = entry_id
         self._idx = idx
-        coord.hass.data.setdefault(f"{DOMAIN}_shade_{entry_id}", []).append(self)
 
     @property
     def device_info(self):

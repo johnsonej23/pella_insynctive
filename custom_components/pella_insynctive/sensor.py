@@ -62,37 +62,30 @@ BRIDGE_DESCRIPTIONS: tuple[PellaBridgeSensorDescription, ...] = (
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coord: PellaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    storage_key = f"{DOMAIN}_sensor_ids_{entry.entry_id}"
-    added_unique_ids: set[str] = hass.data.setdefault(storage_key, set())
-
-    def _make_new_sensors() -> list[SensorEntity]:
-        new_entities: list[SensorEntity] = []
-
-        for desc in BRIDGE_DESCRIPTIONS:
-            entity = PellaBridgeInfoSensor(coord, entry.entry_id, desc)
-            if entity.unique_id not in added_unique_ids:
-                new_entities.append(entity)
-                added_unique_ids.add(entity.unique_id)
-
-        for idx in coord.data:
-            for cls in (PellaBatterySensor, PellaBridgeIndexSensor, PellaRawStatusSensor):
-                entity = cls(coord, entry.entry_id, idx)
-                if entity.unique_id not in added_unique_ids:
-                    new_entities.append(entity)
-                    added_unique_ids.add(entity.unique_id)
-
-        return new_entities
-
-    async_add_entities(_make_new_sensors(), update_before_add=False)
+    registered: set[tuple[str, int | str, type[SensorEntity]]] = set()
 
     @callback
     def _on_update() -> None:
-        new_entities = _make_new_sensors()
+        new_entities: list[SensorEntity] = []
+
+        for desc in BRIDGE_DESCRIPTIONS:
+            key = ("bridge", desc.key, PellaBridgeInfoSensor)
+            if key not in registered:
+                registered.add(key)
+                new_entities.append(PellaBridgeInfoSensor(coord, entry.entry_id, desc))
+
+        for idx in coord.data:
+            for cls in (PellaBatterySensor, PellaBridgeIndexSensor, PellaRawStatusSensor):
+                key = ("point", idx, cls)
+                if key not in registered:
+                    registered.add(key)
+                    new_entities.append(cls(coord, entry.entry_id, idx))
+
         if new_entities:
             async_add_entities(new_entities, update_before_add=False)
 
+    _on_update()
     entry.async_on_unload(coord.async_add_listener(_on_update))
-
 
 class PellaBridgeInfoSensor(SensorEntity):
     def __init__(
