@@ -16,44 +16,36 @@ COVER_OFF_VALUES = {"04", "05", "06"}
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coord: PellaCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[BinarySensorEntity] = []
-    for idx, dev in coord.data.items():
-        if dev.device_type in (DEVICE_WINDOW_DOOR, DEVICE_GARAGE):
-            entities.append(PellaContactBinary(coord, entry.entry_id, idx))
-            entities.append(PellaCoverOffBinary(coord, entry.entry_id, idx))
-        elif dev.device_type == DEVICE_LOCK:
-            entities.append(PellaLockBinary(coord, entry.entry_id, idx))
-            entities.append(PellaCoverOffBinary(coord, entry.entry_id, idx))
-
-    async_add_entities(entities, update_before_add=False)
+    registered: set[tuple[int, type[BinarySensorEntity]]] = set()
 
     @callback
     def _on_update() -> None:
-        existing = {e.unique_id for e in hass.data.setdefault(f"{DOMAIN}_bin_{entry.entry_id}", [])}
-        new = []
+        new_entities: list[BinarySensorEntity] = []
         for idx, dev in coord.data.items():
             if dev.device_type in (DEVICE_WINDOW_DOOR, DEVICE_GARAGE):
-                for cls in (PellaContactBinary, PellaCoverOffBinary):
-                    ent = cls(coord, entry.entry_id, idx)
-                    if ent.unique_id not in existing:
-                        new.append(ent)
+                classes = (PellaContactBinary, PellaCoverOffBinary)
             elif dev.device_type == DEVICE_LOCK:
-                for cls in (PellaLockBinary, PellaCoverOffBinary):
-                    ent = cls(coord, entry.entry_id, idx)
-                    if ent.unique_id not in existing:
-                        new.append(ent)
-        if new:
-            async_add_entities(new, update_before_add=False)
+                classes = (PellaLockBinary, PellaCoverOffBinary)
+            else:
+                continue
 
-    coord.async_add_listener(_on_update)
+            for cls in classes:
+                key = (idx, cls)
+                if key not in registered:
+                    registered.add(key)
+                    new_entities.append(cls(coord, entry.entry_id, idx))
 
+        if new_entities:
+            async_add_entities(new_entities, update_before_add=False)
+
+    _on_update()
+    entry.async_on_unload(coord.async_add_listener(_on_update))
 
 class _BaseBin(BinarySensorEntity):
     def __init__(self, coord: PellaCoordinator, entry_id: str, idx: int):
         self.coordinator = coord
         self._entry_id = entry_id
         self._idx = idx
-        coord.hass.data.setdefault(f"{DOMAIN}_bin_{entry_id}", []).append(self)
 
     @property
     def device_info(self):
